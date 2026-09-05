@@ -1,0 +1,4 @@
+Deployments that override only the service region unexpectedly start with retries
+disabled. The documented retry default is three attempts and is present when no
+custom configuration is supplied. Changing the region should not alter the retry
+policy.

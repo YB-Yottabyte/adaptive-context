@@ -1,0 +1,2 @@
+Customers with a 20% discount are being charged the original price.
+checkout(100, 0.20) should return 80.0, but currently returns 100.

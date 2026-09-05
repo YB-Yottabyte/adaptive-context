@@ -1,0 +1,4 @@
+Notification runs create an extra delivery job with no recipients whenever the
+recipient count is an exact multiple of the configured batch size. A four-recipient
+run with batches of two should enqueue two jobs, but the dashboard shows three. Runs
+with a partially filled final batch appear normal.

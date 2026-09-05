@@ -1,0 +1,4 @@
+A deactivated staff account can still export audit records when its assigned role is
+admin. Active administrators should retain export access, but all actions should be
+denied as soon as an account is deactivated. Other roles appear to respect the
+account status correctly.
