@@ -318,8 +318,25 @@ implementation, and the helper needed to support the diagnosis.
 These limitations make the Static RAG baseline a clear comparison point for the
 future Adaptive Context system.
 
+## Semester Scope
+
+This capstone project focuses on developing and evaluating an **adaptive context-management system for LLM-based software debugging**. The system uses Dynamic RAG as part of the approach to improve how repository evidence is retrieved, compressed, sequenced, and managed before being sent to the model.
+
+The planned work includes:
+
+- **Dynamic retrieval:** retrieve additional repository evidence when the current context is not sufficient.
+- **Query refinement:** use information discovered during analysis to guide later retrieval.
+- **Context compression:** remove irrelevant or redundant code while preserving evidence needed for diagnosis.
+- **Context sequencing:** organize retained evidence so the model can follow the path from the reported failure to the likely root cause.
+- **Context prioritization:** rank evidence based on its relevance to the current debugging task.
+- **Token-efficient context management:** reduce unnecessary input-token usage while preserving enough information for accurate diagnosis.
+- **Grounded diagnosis:** identify the likely faulty behavior, relevant file, and suggested change using repository evidence.
+- **Evaluation:** compare the adaptive system with the Static RAG baseline using retrieval quality, diagnosis accuracy, context size, token usage, latency, and reliability.
+
+The project aims to analyze a repository and construct a smaller, more focused context while preserving the evidence needed to explain a failure. The goal is to improve debugging quality while reducing unnecessary context and token usage.
+
 ## Generative AI Use
 
-Generative AI tools, including Codex, were used to assist with implementation and
+Generative AI tools including Codex were used to assist with implementation and
 documentation. Their use is disclosed for transparency. I reviewed, edited, and
 tested all generated suggestions before including them in the project.
