@@ -56,18 +56,18 @@ uv sync --dev
 
 ### 2. Configure Groq and GPT-OSS 20B
 
-Create an API key in the [GroqCloud Console](https://console.groq.com/keys). In the
-repository root, create a `.env` file containing:
+Create an API key in the [GroqCloud Console](https://console.groq.com/keys). On
+macOS or Linux, create a `.env` file in the repository root containing:
 
-> **Important: Do not forget to create the `.env` file and add your Groq API key
-> before running the Groq baseline.**
+> **Important: Configure `GROQ_API_KEY` before running the Groq baseline. Use the
+> `.env` instructions for Bash/Zsh or the session commands below on Windows.**
 
 ```dotenv
 GROQ_API_KEY=gsk_your_key_here
 GROQ_MODEL=openai/gpt-oss-20b
 ```
 
-Load the variables into the current terminal session:
+On macOS or Linux, load the variables into the current Bash/Zsh session:
 
 ```bash
 set -a
@@ -75,8 +75,36 @@ source .env
 set +a
 ```
 
+Windows PowerShell does not use `source`. Set the same variables for the current
+PowerShell session, then run the baseline:
+
+```powershell
+$env:GROQ_API_KEY = "gsk_your_key_here"
+$env:GROQ_MODEL = "openai/gpt-oss-20b"
+
+uv run python src/baseline.py payment_bug --provider groq --top-k 3
+```
+
+To confirm the key is set in PowerShell without displaying it:
+
+```powershell
+if ($env:GROQ_API_KEY) { Write-Output "GROQ_API_KEY is set" }
+```
+
+For Windows Command Prompt (`cmd.exe`), use:
+
+```bat
+set "GROQ_API_KEY=gsk_your_key_here"
+set "GROQ_MODEL=openai/gpt-oss-20b"
+
+uv run python src/baseline.py payment_bug --provider groq --top-k 3
+```
+
+These PowerShell and Command Prompt variables last only for the current terminal
+session. Open a new terminal and set them again when needed.
+
 The CLI does not load `.env` automatically. Confirm that the key is available
-without printing it:
+without printing it on Bash/Zsh:
 
 ```bash
 test -n "$GROQ_API_KEY" && echo "GROQ_API_KEY is set"
