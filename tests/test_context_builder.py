@@ -1,5 +1,7 @@
-from context_builder import build_debugging_prompt, format_repository_context
+from context_builder import DebuggingContextBuilder
 from retrieval import CodeChunk
+
+BUILDER = DebuggingContextBuilder()
 
 
 def test_format_repository_context_includes_file_headers_and_code() -> None:
@@ -8,7 +10,7 @@ def test_format_repository_context_includes_file_headers_and_code() -> None:
         CodeChunk("utils/discount.py", "RATE = 0.2", 1, 1),
     ]
 
-    context = format_repository_context(chunks)
+    context = BUILDER.format_repository_context(chunks)
 
     assert "--- FILE: payment.py ---\ndef checkout():" in context
     assert "--- FILE: utils/discount.py ---\nRATE = 0.2" in context
@@ -17,7 +19,7 @@ def test_format_repository_context_includes_file_headers_and_code() -> None:
 def test_build_debugging_prompt_requests_public_evidence_summary() -> None:
     chunk = CodeChunk("payment.py", "return price", 1, 1)
 
-    prompt = build_debugging_prompt("Discount is ignored.", [chunk])
+    prompt = BUILDER.build_prompt("Discount is ignored.", [chunk])
 
     assert "BUG REPORT:\nDiscount is ignored." in prompt
     assert "SELECTED REPOSITORY CONTEXT:" in prompt

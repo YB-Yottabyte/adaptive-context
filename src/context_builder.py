@@ -5,18 +5,20 @@ from collections.abc import Sequence
 from retrieval import CodeChunk
 
 
-def format_repository_context(chunks: Sequence[CodeChunk]) -> str:
-    """Format selected chunks with their repository-relative filenames."""
-    sections = [
-        f"--- FILE: {chunk.source_path} ---\n{chunk.content}" for chunk in chunks
-    ]
-    return "\n\n".join(sections)
+class DebuggingContextBuilder:
+    """Build the one-shot model context for a debugging run."""
 
+    def format_repository_context(self, chunks: Sequence[CodeChunk]) -> str:
+        """Format selected chunks with their repository-relative filenames."""
+        sections = [
+            f"--- FILE: {chunk.source_path} ---\n{chunk.content}" for chunk in chunks
+        ]
+        return "\n\n".join(sections)
 
-def build_debugging_prompt(bug_report: str, chunks: Sequence[CodeChunk]) -> str:
-    """Build the complete one-shot prompt sent to the coding model."""
-    context = format_repository_context(chunks)
-    return f"""Use this general Python debugging pattern when tracing return values:
+    def build_prompt(self, bug_report: str, chunks: Sequence[CodeChunk]) -> str:
+        """Build the complete one-shot prompt sent to the coding model."""
+        context = self.format_repository_context(chunks)
+        return f"""Use this general Python debugging pattern when tracing return values:
 
 def transform(value):
     return value + 1
