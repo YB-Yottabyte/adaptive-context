@@ -11,6 +11,7 @@ from pathlib import Path
 import questionary
 from questionary import Choice
 
+from debugging_case import DebuggingCase, DebuggingCaseLoader
 from pipeline import BaselineRunConfig, BaselineRunner
 from providers.factory import ProviderFactory
 from providers.groq_provider import DEFAULT_GROQ_MODEL, GROQ_MODEL_ENVIRONMENT_VARIABLE
@@ -27,11 +28,13 @@ class BaselineCLI:
         *,
         provider_factory: ProviderFactory | None = None,
         runner: BaselineRunner | None = None,
+        case_loader: DebuggingCaseLoader | None = None,
         environment: Mapping[str, str] | None = None,
     ) -> None:
         self.environment = os.environ if environment is None else environment
         self.provider_factory = provider_factory or ProviderFactory(self.environment)
         self.runner = runner or BaselineRunner(provider_factory=self.provider_factory)
+        self.case_loader = case_loader or DebuggingCaseLoader()
 
     def build_parser(self) -> argparse.ArgumentParser:
         """Create the command-line argument parser."""
@@ -49,11 +52,34 @@ class BaselineCLI:
         )
         parser.add_argument(
             "test_case",
+            nargs="?",
             metavar="TEST_CASE",
             help=(
                 "Test-case name under test_cases/ (for example, payment_bug) or an "
                 "explicit repository path."
             ),
+        )
+        parser.add_argument(
+            "--example",
+            help=(
+                "Controlled test-case name or path. The legacy examples/ prefix "
+                "maps to test_cases/."
+            ),
+        )
+        parser.add_argument(
+            "--repo",
+            type=Path,
+            help="Local source repository used for real-world evaluation.",
+        )
+        parser.add_argument(
+            "--issue-file",
+            type=Path,
+            help="Bug report or GitHub issue text for --repo mode.",
+        )
+        parser.add_argument(
+            "--metadata",
+            type=Path,
+            help="Optional evaluation-only JSON metadata for --repo mode.",
         )
         parser.add_argument(
             "--model",
@@ -87,6 +113,7 @@ class BaselineCLI:
             parser.error("--max-tokens must be at least 1")
 
         try:
+            case = self.resolve_input(args)
             available = self.provider_factory.available_providers(
                 local_model=args.model if args.provider == "local" else None
             )
@@ -96,7 +123,7 @@ class BaselineCLI:
                 cli_model=args.model,
             )
             config = BaselineRunConfig(
-                test_case=self.resolve_test_case(args.test_case),
+                case=case,
                 provider=provider_name,
                 model=self.provider_factory.resolve_model(provider_name, args.model),
                 top_k=self.select_top_k(args.top_k),
@@ -106,6 +133,40 @@ class BaselineCLI:
         except (FileNotFoundError, NotADirectoryError, ValueError) as error:
             parser.error(str(error))
 
+    def resolve_input(self, args: argparse.Namespace) -> DebuggingCase:
+        """Validate CLI input modes and return their shared representation."""
+        if args.test_case and args.example:
+            raise ValueError("Use either TEST_CASE or --example, not both.")
+
+        controlled_value = args.example or args.test_case
+        repository_mode_requested = args.repo is not None or args.issue_file is not None
+        if controlled_value and repository_mode_requested:
+            raise ValueError(
+                "Controlled example mode cannot be combined with --repo or "
+                "--issue-file."
+            )
+        if args.repo is not None and args.issue_file is None:
+            raise ValueError("--repo requires --issue-file.")
+        if args.issue_file is not None and args.repo is None:
+            raise ValueError("--issue-file requires --repo.")
+        if args.metadata is not None and args.repo is None:
+            raise ValueError("--metadata is only valid with --repo and --issue-file.")
+
+        if controlled_value:
+            return self.case_loader.load_controlled(
+                self.resolve_controlled_case(controlled_value)
+            )
+        if args.repo is not None and args.issue_file is not None:
+            return self.case_loader.load_repository(
+                args.repo,
+                args.issue_file,
+                args.metadata,
+            )
+        raise ValueError(
+            "Provide a controlled TEST_CASE/--example, or provide --repo together "
+            "with --issue-file."
+        )
+
     @staticmethod
     def resolve_test_case(value: str | Path) -> Path:
         """Resolve a short test-case name or preserve an explicit path."""
@@ -113,6 +174,18 @@ class BaselineCLI:
         if not candidate.is_absolute() and len(candidate.parts) == 1:
             return TEST_CASES_DIRECTORY / candidate
         return candidate
+
+    @classmethod
+    def resolve_controlled_case(cls, value: str | Path) -> Path:
+        """Resolve current names and the legacy examples/ directory spelling."""
+        candidate = Path(value)
+        if (
+            not candidate.is_absolute()
+            and len(candidate.parts) > 1
+            and candidate.parts[0] == "examples"
+        ):
+            return TEST_CASES_DIRECTORY.joinpath(*candidate.parts[1:])
+        return cls.resolve_test_case(candidate)
 
     def select_provider(
         self,

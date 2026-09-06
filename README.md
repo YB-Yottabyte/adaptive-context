@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <img src="./adaptive-context.png" alt="Adaptive Context diagnosing a payment bug in the terminal" width="100%">
+  <img src="./real-world.png" alt="Adaptive Context diagnosing a payment bug in the terminal" width="100%">
 </p>
 
 Adaptive Context explores **how targeted retrieval, compression, and sequencing** can
@@ -194,7 +194,14 @@ terminal; the baseline does not modify the test case or create an output file. T
 first semantic-retrieval run downloads ChromaDB's embedding model and may take
 longer. Local Chroma data is stored in the ignored `.chroma/` directory.
 
-### 6. Run the baseline's own tests
+### 6. Run against a local real repository
+
+Follow the complete [Requests #7432 example](#example-requests-7432) to create the
+local checkout and issue input, select the historical buggy revision, run the same
+Static RAG baseline, and inspect its retrieval and diagnosis output. The example
+documents the procedure only; it does not record or imply a benchmark result.
+
+### 7. Run the baseline's own tests
 
 ```bash
 uv run pytest
@@ -206,7 +213,12 @@ evaluation cases under `test_cases/` are excluded from normal test collection.
 
 ## Input and Output
 
-Each evaluation input is a self-contained directory under
+Both input workflows feed the same repository chunking, Chroma retrieval, prompt,
+and one-model-call pipeline.
+
+### Controlled-case input
+
+Each controlled input is a self-contained directory under
 `test_cases/<case_name>/` containing:
 
 - a non-empty `bug_report.txt` written from the developer's perspective;
@@ -228,7 +240,40 @@ file locations, supporting evidence, root-cause diagnosis, relevant file,
 suggested code change, token usage, and execution time. It currently writes no
 separate result file.
 
-## Test Cases
+The positional command remains the shortest controlled-case form:
+
+```bash
+uv run python src/baseline.py payment_bug --provider groq --top-k 3
+```
+
+The explicit form is also supported. The legacy `examples/` prefix maps to the
+current `test_cases/` directory for command compatibility:
+
+```bash
+uv run python src/baseline.py \
+    --provider groq \
+    --example examples/payment_bug \
+    --top-k 3
+```
+
+## Evaluation Workflow
+
+The project evaluates the same Static RAG baseline in two stages. The stages vary
+the input difficulty, not the retrieval architecture or model-call workflow.
+
+### Controlled Development Cases
+
+The six cases under `test_cases/` are intentionally small, controlled debugging
+examples. They are development and sanity cases used to:
+
+- verify retrieval behavior;
+- validate the end-to-end pipeline;
+- test terminal output;
+- measure basic token usage; and
+- make regressions easy to diagnose.
+
+They exercise known failure categories, but they are not real-world benchmark
+data and should not be presented as such.
 
 | Test case | Main bug category |
 | --- | --- |
@@ -257,6 +302,200 @@ The equivalent explicit command is:
 ```bash
 uv run python src/baseline.py payment_bug --provider groq --top-k 3
 ```
+
+### Real-World Repository Evaluation
+
+The same Static RAG baseline can run against a real open-source repository checked
+out at a historical buggy revision and paired with the original real-world bug
+report. The first real-world repository used for this stage is
+[`psf/requests`](https://github.com/psf/requests).
+
+```text
+Real bug report
+    ↓
+Historical buggy repository revision
+    ↓
+Repository chunking/indexing
+    ↓
+One fixed Top-K retrieval
+    ↓
+One LLM call
+    ↓
+Diagnosis + suggested change
+    ↓
+Evaluation against known maintainer fix
+```
+
+#### Example: Requests #7432
+
+[Requests issue #7432](https://github.com/psf/requests/issues/7432) is a real
+regression affecting `PreparedRequest.prepare_body` in Requests 2.34.0. For this
+baseline case, Requests is checked out at the historical buggy 2.34.0 release
+revision, while a concise issue report is stored separately. The known maintainer
+fix must **not** be included in the repository context or issue text supplied to
+the LLM. This remains one fixed Top-K retrieval followed by one LLM call.
+
+##### 1. Create the local directories
+
+```bash
+mkdir -p data/repos data/issues
+```
+
+##### 2. Clone Requests locally
+
+```bash
+git clone -c fetch.fsck.badTimezone=ignore \
+  https://github.com/psf/requests.git \
+  data/repos/requests
+```
+
+The `data/repos/` directory is ignored by Git. The third-party Requests checkout
+at `data/repos/requests` is local only and must not be committed or pushed to this
+capstone repository.
+
+##### 3. Check out and verify the historical buggy revision
+
+Check out the Requests 2.34.0 release commit:
+
+```bash
+git -C data/repos/requests checkout 0b401c7
+```
+
+Verify the checkout:
+
+```bash
+git -C data/repos/requests rev-parse --short HEAD
+```
+
+Expected output:
+
+```text
+0b401c76
+```
+
+##### 4. Create the issue input
+
+Create the separate issue file:
+
+```bash
+touch data/issues/requests_7432.txt
+```
+
+Open that file and paste this concise reproduction description:
+
+```text
+PreparedRequest.prepare_body stream detection regression
+
+Requests 2.34.0 changed stream detection in PreparedRequest.prepare_body()
+from checking for __iter__ to using isinstance(data, Iterable).
+
+File-like wrappers that expose __iter__, read, tell, and seek through
+__getattr__ delegation are no longer recognized correctly as streaming
+request bodies.
+
+As a result, the body position is not recorded and the body cannot be
+rewound correctly during 307/308 redirects.
+
+Expected behavior:
+The upload should continue successfully through the redirect.
+
+Actual behavior:
+The redirected request may send an already-consumed or empty body and
+eventually time out.
+```
+
+This is a concise evaluation input based on the real issue. It describes the
+regression without including the known maintainer solution.
+
+##### 5. Run the Static RAG baseline
+
+```bash
+uv run python src/baseline.py \
+  --provider groq \
+  --model openai/gpt-oss-20b \
+  --repo data/repos/requests \
+  --issue-file data/issues/requests_7432.txt \
+  --top-k 3 \
+  --max-tokens 4096
+```
+
+Inspect the result for:
+
+- the retrieved source files and chunks;
+- whether `src/requests/models.py` was retrieved;
+- the diagnosis;
+- the suggested change;
+- the amount and percentage of repository context selected;
+- input, output, and total tokens; and
+- latency.
+
+Retrieving `src/requests/models.py` does not automatically make the diagnosis or
+suggested change correct. Retrieval success, diagnosis accuracy, and
+suggested-change correctness are evaluated separately.
+
+Requests #7432 is a medium-difficulty real-world case. The six cases under
+`test_cases/` remain controlled development and sanity cases.
+
+Repository safety for this workflow:
+
+- `data/repos/requests` is a local-only third-party checkout;
+- `data/repos/` is Git-ignored;
+- `.env` and `.chroma/` remain Git-ignored;
+- the cloned Requests repository must not be committed or pushed; and
+- small reproducible inputs under `data/issues/` may be committed if desired.
+
+Optional JSON metadata can support post-retrieval evaluation:
+
+```json
+{
+  "repo": "OWNER/REPOSITORY",
+  "issue_number": "ISSUE_NUMBER",
+  "base_commit": "BUGGY_COMMIT_SHA",
+  "gold_patch_files": [
+    "path/to/implementation.py",
+    "tests/test_regression.py"
+  ]
+}
+```
+
+Pass it separately:
+
+```bash
+uv run python src/baseline.py \
+    --provider groq \
+    --model openai/gpt-oss-20b \
+    --repo data/repos/requests \
+    --issue-file data/issues/requests_<issue>.txt \
+    --metadata data/issues/requests_<issue>_metadata.json \
+    --top-k 3 \
+    --max-tokens 4096
+```
+
+Metadata is used only after retrieval to compare selected paths with
+`gold_patch_files`; it is never included in the LLM prompt. The metadata determines
+which paths count as gold, so test files are not automatically treated as the
+primary faulty implementation file.
+
+#### Real-world evaluation criteria
+
+Record these measures for a completed real-world run:
+
+- whether the gold or relevant implementation file was retrieved;
+- diagnosis accuracy;
+- suggested-change correctness;
+- retrieved context size;
+- percentage of repository context selected;
+- input, output, and total tokens; and
+- latency.
+
+Retrieval success and diagnosis correctness are separate outcomes. A run may
+retrieve the correct file but still produce an incorrect diagnosis or patch. That
+distinction is central to evaluating whether context selection alone is sufficient.
+
+This remains the **Static RAG baseline**: one fixed Top-K retrieval followed by one
+LLM call. Later, Adaptive Context / Dynamic RAG will be evaluated against the same
+cases using the same repository revision, issue text, provider, model, and
+evaluation criteria.
 
 ## Example Baseline Output
 
@@ -312,6 +551,8 @@ implementation, and the helper needed to support the diagnosis.
 │   ├── pipeline.py             # Static RAG workflow and timings
 │   ├── retrieval.py            # repository chunking and retrieval interfaces
 │   ├── semantic_retrieval.py   # ChromaDB similarity retrieval
+│   ├── debugging_case.py       # shared controlled/real input model
+│   ├── context_metrics.py      # context estimates and retrieval evaluation
 │   ├── context_builder.py      # debugging prompt construction
 │   ├── debugging_result.py     # response parsing and change analysis
 │   ├── terminal_ui.py          # terminal presentation and response streaming
@@ -328,6 +569,9 @@ implementation, and the helper needed to support the diagnosis.
 │   ├── payment_bug/
 │   └── state_mutation_bug/
 ├── tests/                      # baseline's passing unit tests
+├── data/
+│   ├── issues/                 # small reproducible real-world case inputs
+│   └── repos/                  # ignored external repository checkouts
 ├── adaptive-context.png        # terminal output screenshot
 ├── pyproject.toml              # metadata, dependencies, and tool settings
 ├── uv.lock                     # locked dependency versions

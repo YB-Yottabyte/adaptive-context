@@ -72,12 +72,308 @@ def test_terminal_output_remains_compact_and_shows_changed_lines() -> None:
     assert "├─ test_payment.py:1-8" in rendered
     assert "└─ discount.py:1-2" in rendered
     assert "● Diagnosis points to payment.py" in rendered
+    assert "payment.py" in rendered
     assert "├─ test_payment.py defines the expected result." in rendered
     assert "└─ payment.py ignores the returned value." in rendered
     assert "2 │     apply_discount(price, discount)" in rendered
     assert "3 │     return price" in rendered
     assert "2 └────→     return apply_discount(price, discount)" in rendered
     assert "Current code" not in rendered
+
+
+def test_exact_replacement_in_real_source_window_uses_diff_rendering() -> None:
+    output = StringIO()
+    terminal = make_terminal(output)
+    response = (
+        structured_response()
+        .replace(
+            "payment.py",
+            "src/requests/sessions.py",
+        )
+        .replace(
+            "def checkout(price, discount):\n"
+            "    return apply_discount(price, discount)",
+            "def rebuild_auth(prepared_request, response):\n"
+            "    return get_netrc_auth(prepared_request.url)",
+        )
+    )
+
+    terminal.display_model_response(
+        GenerationResult(text=response),
+        selected_chunks=[
+            CodeChunk(
+                "src/requests/sessions.py",
+                "    return previous_helper_result\n\n"
+                "def rebuild_auth(prepared_request, response):\n"
+                "    return response.request.headers.get('Authorization')\n\n"
+                "def rebuild_proxies(prepared_request, proxies):\n"
+                "    return proxies",
+                240,
+                246,
+            )
+        ],
+    )
+
+    rendered = output.getvalue()
+    assert "src/requests/sessions.py" in rendered
+    assert "243 │     return response.request.headers.get('Authorization')" in rendered
+    assert "243 └────→     return get_netrc_auth(prepared_request.url)" in rendered
+
+
+def test_unmappable_real_repository_suggestion_uses_plain_code_fallback() -> None:
+    output = StringIO()
+    terminal = make_terminal(output)
+    response = (
+        structured_response()
+        .replace(
+            "payment.py",
+            "src/requests/sessions.py",
+        )
+        .replace(
+            "def checkout(price, discount):\n"
+            "    return apply_discount(price, discount)",
+            "def update_auth(prepared_request):\n"
+            "    return get_netrc_auth(prepared_request.url)",
+        )
+    )
+
+    terminal.display_model_response(
+        GenerationResult(text=response),
+        selected_chunks=[
+            CodeChunk(
+                "src/requests/sessions.py",
+                "def rebuild_auth(prepared_request, response):\n"
+                "    return response.request.headers.get('Authorization')\n\n"
+                "def rebuild_proxies(prepared_request, proxies):\n"
+                "    return proxies",
+                241,
+                245,
+            )
+        ],
+    )
+
+    rendered = output.getvalue()
+    assert "def update_auth(prepared_request):" in rendered
+    assert "return get_netrc_auth(prepared_request.url)" in rendered
+    assert "└────→" not in rendered
+    assert "response.request.headers.get" not in rendered
+
+
+def test_labeled_exact_source_replacement_uses_repository_diff() -> None:
+    output = StringIO()
+    terminal = make_terminal(output)
+    response = (
+        "Evidence considered:\n- models.py checks Iterable.\n\n"
+        "Conclusion:\nStream detection is too strict.\n\n"
+        "Relevant file:\nsrc/requests/models.py\n\n"
+        "Suggested change:\n"
+        "# Original code:\n"
+        "# if isinstance(data, Iterable) and not isinstance(\n"
+        "#     data, (str, bytes, list, tuple, Mapping)\n"
+        "# ):\n"
+        "# Updated code:\n"
+        'is_iterable = isinstance(data, Iterable) or hasattr(data, "__iter__")\n'
+        "if is_iterable and not isinstance(\n"
+        "    data, (str, bytes, list, tuple, Mapping)\n"
+        "):\n\n"
+        "Explanation:\nAccept delegated iterators."
+    )
+
+    terminal.display_model_response(
+        GenerationResult(text=response),
+        selected_chunks=[
+            CodeChunk(
+                "src/requests/models.py",
+                '        body = body.encode("utf-8")\n\n'
+                "        if isinstance(data, Iterable) and not isinstance(\n"
+                "            data, (str, bytes, list, tuple, Mapping)\n"
+                "        ):\n"
+                "            length = super_len(data)",
+                597,
+                602,
+            )
+        ],
+    )
+
+    rendered = output.getvalue()
+    assert "src/requests/models.py" in rendered
+    assert "599 │         if isinstance(data, Iterable) and not isinstance(" in rendered
+    assert "599 └────→         is_iterable = isinstance(data, Iterable)" in rendered
+    assert 'hasattr(data, "__iter__")' in rendered
+
+
+def test_labeled_simplified_change_uses_unique_retrieved_source_line() -> None:
+    output = StringIO()
+    terminal = make_terminal(output)
+    response = (
+        "Evidence considered:\n- models.py checks Iterable.\n\n"
+        "Conclusion:\nStream detection is too strict.\n\n"
+        "Relevant file:\nsrc/requests/models.py\n\n"
+        "Suggested change:\n"
+        "# Original snippet (simplified)\n"
+        "# if isinstance(data, Iterable):\n"
+        "#     # streamed body\n"
+        "# else:\n"
+        "#     # raw body\n\n"
+        "# Updated snippet\n"
+        'if hasattr(data, "__iter__"):\n'
+        "    # streamed body\n"
+        "else:\n"
+        "    # raw body\n\n"
+        "Explanation:\nAccept delegated iterators."
+    )
+
+    terminal.display_model_response(
+        GenerationResult(text=response),
+        selected_chunks=[
+            CodeChunk(
+                "src/requests/models.py",
+                "        if isinstance(data, Iterable) and not isinstance(\n"
+                "            data, (str, bytes, list, tuple, Mapping)\n"
+                "        ):\n"
+                "            length = super_len(data)",
+                599,
+                602,
+            )
+        ],
+    )
+
+    rendered = output.getvalue()
+    assert "599 │         if isinstance(data, Iterable) and not isinstance(" in rendered
+    assert (
+        '599 └────→         if hasattr(data, "__iter__") and not isinstance('
+        in rendered
+    )
+    assert "# Original snippet (simplified)" not in rendered
+
+
+def test_labeled_change_outside_retrieved_lines_uses_plain_fallback() -> None:
+    output = StringIO()
+    terminal = make_terminal(output)
+    response = (
+        "Evidence considered:\n- models.py checks Iterable.\n\n"
+        "Conclusion:\nStream detection is too strict.\n\n"
+        "Relevant file:\nsrc/requests/models.py\n\n"
+        "Suggested change:\n"
+        "# Original code (simplified):\n"
+        "# if isinstance(data, Iterable):\n"
+        "#     # streamed body\n"
+        "# else:\n"
+        "#     # raw body\n\n"
+        "# Updated code:\n"
+        'if hasattr(data, "__iter__"):\n'
+        "    # streamed body\n"
+        "else:\n"
+        "    # raw body\n\n"
+        "Explanation:\nAccept delegated iterators."
+    )
+
+    terminal.display_model_response(
+        GenerationResult(text=response),
+        selected_chunks=[
+            CodeChunk(
+                "src/requests/models.py",
+                "        ):\n"
+                "            try:\n"
+                "                length = super_len(data)",
+                601,
+                603,
+            )
+        ],
+    )
+
+    rendered = output.getvalue()
+    assert "# Original code (simplified):" in rendered
+    assert 'if hasattr(data, "__iter__"):' in rendered
+    assert "└────→" not in rendered
+
+
+def test_prefixed_simplified_change_uses_actual_repository_source() -> None:
+    output = StringIO()
+    terminal = make_terminal(output)
+    response = (
+        "Evidence considered:\n- models.py checks Iterable.\n\n"
+        "Conclusion:\nStream detection is too strict.\n\n"
+        "Relevant file:\nsrc/requests/models.py\n\n"
+        "Suggested change:\n"
+        "# Detect streamed bodies\n"
+        "-        if isinstance(data, Iterable):\n"
+        '+        if hasattr(data, "__iter__"):\n'
+        "             # Record the current file position before reading.\n\n"
+        "Explanation:\nAccept delegated iterators."
+    )
+
+    terminal.display_model_response(
+        GenerationResult(text=response),
+        selected_chunks=[
+            CodeChunk(
+                "src/requests/models.py",
+                "        if isinstance(data, Iterable) and not isinstance(\n"
+                "            data, (str, bytes, list, tuple, Mapping)\n"
+                "        ):\n"
+                "            length = super_len(data)",
+                599,
+                602,
+            )
+        ],
+    )
+
+    rendered = output.getvalue()
+    assert "src/requests/models.py" in rendered
+    assert "599 │         if isinstance(data, Iterable) and not isinstance(" in rendered
+    assert (
+        '599 └────→         if hasattr(data, "__iter__") and not isinstance('
+        in rendered
+    )
+    assert "# Detect streamed bodies" not in rendered
+
+
+def test_updated_snippet_with_unique_context_uses_repository_diff() -> None:
+    output = StringIO()
+    terminal = make_terminal(output)
+    response = (
+        "Evidence considered:\n- models.py checks tell().\n\n"
+        "Conclusion:\nStream detection is too strict.\n\n"
+        "Relevant file:\nsrc/requests/models.py\n\n"
+        "Suggested change:\n"
+        'if getattr(body, "tell", None) is not None or hasattr(body, "__iter__"):\n'
+        "            # Record the current file position before reading.\n"
+        "            # This will allow us to rewind a file in the event\n"
+        "            # of a redirect.\n"
+        "            try:\n"
+        "                self._body_position = body.tell()\n"
+        "            except OSError:\n"
+        "                self._body_position = object()\n\n"
+        "Explanation:\nAccept delegated iterators."
+    )
+    full_source = (
+        "        if getattr(body, \"tell\", None) is not None:\n"
+        "            # Record the current file position before reading.\n"
+        "            # This will allow us to rewind a file in the event\n"
+        "            # of a redirect.\n"
+        "            try:\n"
+        "                self._body_position = body.tell()\n"
+        "            except OSError:\n"
+        "                self._body_position = object()\n"
+    )
+
+    terminal.display_model_response(
+        GenerationResult(text=response),
+        selected_chunks=[
+            CodeChunk(
+                "src/requests/models.py",
+                full_source,
+                609,
+                616,
+            )
+        ],
+    )
+
+    rendered = output.getvalue()
+    assert "src/requests/models.py" in rendered
+    assert '609 │         if getattr(body, "tell", None) is not None:' in rendered
+    assert '609 └────→         if getattr(body, "tell", None) is not None or' in rendered
+    assert 'hasattr(body, "__iter__"):' in rendered
 
 
 def test_partial_suggestion_waits_before_rendering_diff() -> None:

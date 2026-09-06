@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import re
+from dataclasses import dataclass, field
 from typing import Any
 
 from providers.base import GenerationResult, LLMProvider, TextCallback
@@ -11,6 +13,137 @@ DEFAULT_GROQ_MODEL = "openai/gpt-oss-20b"
 GROQ_API_KEY_ENVIRONMENT_VARIABLE = "GROQ_API_KEY"
 GROQ_MODEL_ENVIRONMENT_VARIABLE = "GROQ_MODEL"
 PROVIDER_NAME = "Groq"
+_MISSING = object()
+
+
+@dataclass
+class _GroqStreamDiagnostics:
+    """Collect non-sensitive structural metadata from one streamed response."""
+
+    api_status: str = "unavailable"
+    chunks_received: int = 0
+    chunks_with_choices: int = 0
+    choices_received: int = 0
+    content_deltas: int = 0
+    content_characters: int = 0
+    reasoning_present: bool = False
+    reasoning_characters: int = 0
+    malformed_chunks: int = 0
+    finish_reasons: set[str] = field(default_factory=set)
+    usage: Any | None = None
+
+    def observe(self, chunk: Any) -> str:
+        """Inspect one chunk and return only its visible text delta."""
+        self.chunks_received += 1
+        choices = getattr(chunk, "choices", _MISSING)
+        if choices is _MISSING or not isinstance(choices, (list, tuple)):
+            self.malformed_chunks += 1
+            self._observe_usage(chunk)
+            return ""
+        if not choices:
+            self._observe_usage(chunk)
+            return ""
+
+        self.chunks_with_choices += 1
+        self.choices_received += len(choices)
+        choice = choices[0]
+        self._observe_finish_reason(choice)
+        delta = getattr(choice, "delta", _MISSING)
+        if delta is _MISSING or delta is None:
+            self.malformed_chunks += 1
+            self._observe_usage(chunk)
+            return ""
+
+        self._observe_reasoning(delta)
+        content = getattr(delta, "content", None)
+        if content is not None and not isinstance(content, str):
+            self.malformed_chunks += 1
+            self._observe_usage(chunk)
+            return ""
+        if content:
+            self.content_deltas += 1
+            self.content_characters += len(content)
+        self._observe_usage(chunk)
+        return content or ""
+
+    def summary(self) -> str:
+        """Format safe metadata suitable for an exception shown to a user."""
+        content_state = (
+            f"present ({self.content_characters} chars)"
+            if self.content_characters
+            else "empty"
+        )
+        reasoning_state = (
+            f"present ({self.reasoning_characters} chars)"
+            if self.reasoning_present
+            else "absent"
+        )
+        finish_reasons = (
+            ",".join(sorted(self.finish_reasons))
+            if self.finish_reasons
+            else "not provided"
+        )
+        return (
+            "Non-sensitive response metadata: "
+            f"api_status={self.api_status}; chunks={self.chunks_received}; "
+            f"chunks_with_choices={self.chunks_with_choices}; "
+            f"choices={self.choices_received}; content={content_state}; "
+            f"reasoning={reasoning_state}; finish_reason={finish_reasons}; "
+            f"usage_tokens={self._usage_summary()}; "
+            f"malformed_chunks={self.malformed_chunks}."
+        )
+
+    def _observe_reasoning(self, delta: Any) -> None:
+        reasoning = getattr(delta, "reasoning", None)
+        if reasoning is None:
+            reasoning = getattr(delta, "reasoning_content", None)
+        if reasoning:
+            self.reasoning_present = True
+            if isinstance(reasoning, str):
+                self.reasoning_characters += len(reasoning)
+
+    def _observe_finish_reason(self, choice: Any) -> None:
+        finish_reason = getattr(choice, "finish_reason", None)
+        if finish_reason is not None:
+            self.finish_reasons.add(self._safe_label(finish_reason))
+
+    def _observe_usage(self, chunk: Any) -> None:
+        groq_metadata = getattr(chunk, "x_groq", None)
+        usage = getattr(groq_metadata, "usage", None)
+        if usage is not None:
+            self.usage = usage
+
+    def _usage_summary(self) -> str:
+        if self.usage is None:
+            return "unavailable"
+        values = (
+            self._safe_count(getattr(self.usage, "prompt_tokens", None)),
+            self._safe_count(getattr(self.usage, "completion_tokens", None)),
+            self._safe_count(getattr(self.usage, "total_tokens", None)),
+        )
+        return f"input:{values[0]},output:{values[1]},total:{values[2]}"
+
+    @staticmethod
+    def _safe_count(value: Any) -> str:
+        return str(value) if isinstance(value, int) and value >= 0 else "unavailable"
+
+    @staticmethod
+    def _safe_label(value: Any) -> str:
+        text = str(value)
+        return text if re.fullmatch(r"[A-Za-z0-9_.:-]{1,40}", text) else "unavailable"
+
+    @classmethod
+    def from_stream(cls, stream: Any) -> _GroqStreamDiagnostics:
+        """Capture an HTTP status only when the SDK exposes a scalar code."""
+        for candidate in (
+            stream,
+            getattr(stream, "response", None),
+            getattr(stream, "_response", None),
+        ):
+            status = getattr(candidate, "status_code", None)
+            if isinstance(status, int):
+                return cls(api_status=str(status))
+        return cls()
 
 
 def resolve_groq_model(cli_model: str | None = None) -> str:
@@ -20,6 +153,11 @@ def resolve_groq_model(cli_model: str | None = None) -> str:
         or os.environ.get(GROQ_MODEL_ENVIRONMENT_VARIABLE)
         or DEFAULT_GROQ_MODEL
     )
+
+
+def is_gpt_oss_model(model_name: str) -> bool:
+    """Return whether a provider-qualified model ID selects GPT-OSS."""
+    return model_name.rsplit("/", maxsplit=1)[-1].lower().startswith("gpt-oss-")
 
 
 class GroqProvider(LLMProvider):
@@ -59,32 +197,45 @@ class GroqProvider(LLMProvider):
         if not prompt.strip():
             raise ValueError("prompt must not be empty")
 
-        stream = self._client.chat.completions.create(
-            messages=[{"role": "user", "content": prompt}],
-            model=self.model_name,
-            temperature=0.0,
-            max_completion_tokens=self.max_tokens,
-            stream=True,
-        )
+        request_options: dict[str, Any] = {
+            "messages": [{"role": "user", "content": prompt}],
+            "model": self.model_name,
+            "temperature": 0.0,
+            "max_completion_tokens": self.max_tokens,
+            "stream": True,
+        }
+        if is_gpt_oss_model(self.model_name):
+            request_options["reasoning_effort"] = "low"
+
+        stream = self._client.chat.completions.create(**request_options)
 
         response_parts: list[str] = []
-        usage: Any | None = None
+        diagnostics = _GroqStreamDiagnostics.from_stream(stream)
         for chunk in stream:
-            if chunk.choices:
-                content = chunk.choices[0].delta.content or ""
-                if content:
-                    response_parts.append(content)
-                    if on_text is not None:
-                        on_text(content)
-            groq_metadata = getattr(chunk, "x_groq", None)
-            chunk_usage = getattr(groq_metadata, "usage", None)
-            if chunk_usage is not None:
-                usage = chunk_usage
+            content = diagnostics.observe(chunk)
+            if content:
+                response_parts.append(content)
+                if on_text is not None:
+                    on_text(content)
 
         response_text = "".join(response_parts).strip()
+        if diagnostics.malformed_chunks:
+            raise ValueError(
+                f"Groq returned a malformed streamed response. {diagnostics.summary()}"
+            )
         if not response_text:
-            raise ValueError("Groq returned an empty response.")
+            if diagnostics.chunks_with_choices == 0:
+                message = "Groq returned no choices."
+            elif diagnostics.reasoning_present:
+                message = (
+                    "Groq returned reasoning, but message.content was empty. The "
+                    "completion may have ended before producing a final answer."
+                )
+            else:
+                message = "Groq returned choices, but message.content was empty."
+            raise ValueError(f"{message} {diagnostics.summary()}")
 
+        usage = diagnostics.usage
         return GenerationResult(
             text=response_text,
             input_tokens=usage.prompt_tokens if usage is not None else None,

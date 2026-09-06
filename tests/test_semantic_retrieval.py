@@ -1,4 +1,5 @@
 from pathlib import Path
+from unittest.mock import Mock
 
 import chromadb
 import pytest
@@ -86,6 +87,20 @@ def test_persistent_client_writes_to_configured_local_directory(
 
     assert persist_directory.is_dir()
     assert [result.chunk.source_path for result in results] == ["payment.py"]
+
+
+def test_close_releases_client_once_and_clears_reference() -> None:
+    client = Mock()
+    retriever = ChromaRetriever(
+        client=client,
+        embedding_function=KeywordEmbedding(),
+    )
+
+    retriever.close()
+    retriever.close()
+
+    client.close.assert_called_once_with()
+    assert retriever._client is None
 
 
 def test_semantic_query_returns_relevant_file_and_fixed_top_k(
@@ -215,12 +230,12 @@ def test_invalid_repository_paths_are_rejected(
     retriever: ChromaRetriever,
 ) -> None:
     missing = tmp_path / "missing"
-    with pytest.raises(FileNotFoundError, match="Test case directory does not exist"):
+    with pytest.raises(FileNotFoundError, match="Repository directory does not exist"):
         retriever.retrieve("query", [], 1, missing)
 
     regular_file = tmp_path / "repository.py"
     regular_file.write_text("value = 1\n", encoding="utf-8")
-    with pytest.raises(NotADirectoryError, match="Test case path is not a directory"):
+    with pytest.raises(NotADirectoryError, match="Repository path is not a directory"):
         retriever.retrieve("query", [], 1, regular_file)
 
 

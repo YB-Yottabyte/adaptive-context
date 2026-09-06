@@ -44,6 +44,14 @@ class ChromaRetriever:
             self._client = chromadb.PersistentClient(path=self.persist_directory)
         return self._client
 
+    def close(self) -> None:
+        """Deterministically release Chroma's persistent native resources."""
+        client = self._client
+        if client is None:
+            return
+        client.close()
+        self._client = None
+
     def _fresh_collection(self, repository_dir: Path) -> Any:
         """Create or empty this repository's isolated persistent collection."""
         collection = self._get_client().get_or_create_collection(
@@ -73,11 +81,11 @@ class ChromaRetriever:
         repository_dir = repository_dir.resolve()
         if not repository_dir.exists():
             raise FileNotFoundError(
-                f"Test case directory does not exist: {repository_dir}"
+                f"Repository directory does not exist: {repository_dir}"
             )
         if not repository_dir.is_dir():
             raise NotADirectoryError(
-                f"Test case path is not a directory: {repository_dir}"
+                f"Repository path is not a directory: {repository_dir}"
             )
         if not query.strip():
             raise ValueError("retrieval query must not be empty")

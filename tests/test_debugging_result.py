@@ -98,5 +98,6 @@ def test_analyzer_finds_definition_and_preserves_repository_line_number() -> Non
     definition = SourceChangeAnalyzer().find_current_definition(summary, [chunk])
 
     assert definition is not None
+    assert definition.source_path == "src/payment.py"
     assert definition.code == "def checkout():\n    return False"
     assert definition.start_line == 22

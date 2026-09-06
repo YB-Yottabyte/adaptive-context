@@ -1,25 +1,47 @@
+import argparse
 from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
 
 from cli import BaselineCLI
+from debugging_case import CaseMode, DebuggingCase, DebuggingCaseLoader
 
 
 def make_cli(*, environment: dict[str, str] | None = None) -> BaselineCLI:
     factory = Mock()
     runner = Mock()
+    case_loader = Mock()
+    case_loader.load_controlled.return_value = DebuggingCase(
+        repository_path=Path("/controlled"),
+        bug_report="Controlled failure",
+        display_name="controlled",
+        mode=CaseMode.CONTROLLED,
+    )
+    case_loader.load_repository.return_value = DebuggingCase(
+        repository_path=Path("/repository"),
+        bug_report="Real issue",
+        display_name="repository",
+        mode=CaseMode.REPOSITORY,
+    )
     return BaselineCLI(
         provider_factory=factory,
         runner=runner,
+        case_loader=case_loader,
         environment=environment or {},
     )
 
 
-def test_parser_exposes_one_chroma_retrieval_pipeline() -> None:
-    args = make_cli().build_parser().parse_args(["payment_bug"])
+def parse(cli: BaselineCLI, values: list[str]) -> argparse.Namespace:
+    return cli.build_parser().parse_args(values)
+
+
+def test_parser_preserves_positional_controlled_case_mode() -> None:
+    args = parse(make_cli(), ["payment_bug"])
 
     assert args.test_case == "payment_bug"
+    assert args.example is None
+    assert args.repo is None
     assert not hasattr(args, "retriever")
 
 
@@ -31,8 +53,77 @@ def test_short_test_case_name_resolves_under_test_cases() -> None:
     assert resolved.is_absolute()
 
 
+def test_legacy_examples_prefix_maps_to_test_cases() -> None:
+    resolved = BaselineCLI.resolve_controlled_case("examples/payment_bug")
+
+    assert resolved.name == "payment_bug"
+    assert resolved.parent.name == "test_cases"
+
+
 def test_explicit_test_case_path_is_preserved(tmp_path: Path) -> None:
     assert BaselineCLI.resolve_test_case(tmp_path) == tmp_path
+
+
+def test_controlled_case_loader_keeps_existing_mode_working(tmp_path: Path) -> None:
+    (tmp_path / "bug_report.txt").write_text("Something broke.", encoding="utf-8")
+    (tmp_path / "module.py").write_text("value = 1\n", encoding="utf-8")
+    cli = make_cli()
+    cli.case_loader = DebuggingCaseLoader()
+
+    case = cli.resolve_input(parse(cli, [str(tmp_path)]))
+
+    assert case.repository_path == tmp_path
+    assert case.bug_report == "Something broke."
+    assert case.mode is CaseMode.CONTROLLED
+
+
+def test_repo_and_issue_file_load_real_repository_mode(tmp_path: Path) -> None:
+    cli = make_cli()
+    repo = tmp_path / "repo"
+    issue = tmp_path / "issue.txt"
+
+    case = cli.resolve_input(
+        parse(cli, ["--repo", str(repo), "--issue-file", str(issue)])
+    )
+
+    assert case.mode is CaseMode.REPOSITORY
+    cli.case_loader.load_repository.assert_called_once_with(repo, issue, None)
+
+
+@pytest.mark.parametrize(
+    ("arguments", "message"),
+    [
+        (["--repo", "repo"], "--repo requires --issue-file"),
+        (["--issue-file", "issue.txt"], "--issue-file requires --repo"),
+        (
+            ["payment_bug", "--example", "auth_bug"],
+            "Use either TEST_CASE or --example",
+        ),
+        (
+            [
+                "--example",
+                "payment_bug",
+                "--repo",
+                "repo",
+                "--issue-file",
+                "issue.txt",
+            ],
+            "Controlled example mode cannot be combined",
+        ),
+        (["--metadata", "metadata.json"], "--metadata is only valid"),
+        ([], "Provide a controlled TEST_CASE/--example"),
+    ],
+)
+def test_invalid_input_mode_combinations_are_rejected(
+    arguments: list[str],
+    message: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as error:
+        make_cli().run([*arguments, "--provider", "groq", "--top-k", "1"])
+
+    assert error.value.code == 2
+    assert message in capsys.readouterr().err
 
 
 def test_select_provider_preserves_available_override() -> None:
@@ -119,14 +210,14 @@ def test_select_top_k_requires_flag_for_noninteractive_run() -> None:
         make_cli().select_top_k(None, interactive=False)
 
 
-def test_run_resolves_configuration_before_calling_runner(tmp_path: Path) -> None:
+def test_run_resolves_configuration_before_calling_runner() -> None:
     cli = make_cli()
     cli.provider_factory.available_providers.return_value = ("groq",)
     cli.provider_factory.resolve_model.return_value = "cli-model"
 
     cli.run(
         [
-            str(tmp_path),
+            "payment_bug",
             "--provider",
             "groq",
             "--model",
@@ -139,8 +230,8 @@ def test_run_resolves_configuration_before_calling_runner(tmp_path: Path) -> Non
     )
 
     config = cli.runner.run.call_args.args[0]
+    assert config.case.mode is CaseMode.CONTROLLED
     assert config.provider == "groq"
-    assert config.test_case == tmp_path
     assert config.model == "cli-model"
     assert config.top_k == 2
     assert config.max_tokens == 64
@@ -154,14 +245,13 @@ def test_run_resolves_configuration_before_calling_runner(tmp_path: Path) -> Non
     ],
 )
 def test_run_rejects_non_positive_numeric_options(
-    tmp_path: Path,
     option: str,
     value: str,
     message: str,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     with pytest.raises(SystemExit) as error:
-        make_cli().run([str(tmp_path), option, value])
+        make_cli().run(["payment_bug", option, value])
 
     assert error.value.code == 2
     assert message in capsys.readouterr().err

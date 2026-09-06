@@ -5,6 +5,7 @@ import pytest
 from retrieval import (
     CodeChunk,
     RepositoryChunker,
+    SourceDocument,
 )
 
 
@@ -13,10 +14,12 @@ def test_find_python_files_is_recursive_sorted_and_ignores_hidden_dirs(
 ) -> None:
     (tmp_path / "nested").mkdir()
     (tmp_path / ".venv").mkdir()
+    (tmp_path / "venv").mkdir()
     (tmp_path / "z.py").write_text("z = 1\n", encoding="utf-8")
     (tmp_path / "nested" / "a.py").write_text("a = 1\n", encoding="utf-8")
     (tmp_path / "notes.txt").write_text("not Python\n", encoding="utf-8")
     (tmp_path / ".venv" / "ignored.py").write_text("ignored = 1\n", encoding="utf-8")
+    (tmp_path / "venv" / "ignored.py").write_text("ignored = 2\n", encoding="utf-8")
 
     files = RepositoryChunker().find_python_files(tmp_path)
 
@@ -94,3 +97,29 @@ def test_create_repository_chunks_handles_small_repository(tmp_path: Path) -> No
     chunks = RepositoryChunker().create_chunks(tmp_path)
 
     assert chunks == [CodeChunk("small.py", "value = 1", 1, 1)]
+
+
+def test_create_index_preserves_documents_and_chunk_metadata(tmp_path: Path) -> None:
+    (tmp_path / "package").mkdir()
+    source = tmp_path / "package" / "service.py"
+    source.write_text("one\ntwo\nthree\n", encoding="utf-8")
+
+    index = RepositoryChunker(chunk_lines=2, overlap_lines=1).create_index(tmp_path)
+
+    assert index.documents == (
+        SourceDocument("package/service.py", "one\ntwo\nthree\n"),
+    )
+    assert index.chunks == (
+        CodeChunk("package/service.py", "one\ntwo", 1, 2),
+        CodeChunk("package/service.py", "two\nthree", 2, 3),
+    )
+
+
+def test_create_index_skips_binary_python_file(tmp_path: Path) -> None:
+    (tmp_path / "binary.py").write_bytes(b"value = 1\x00binary")
+    (tmp_path / "source.py").write_text("value = 1\n", encoding="utf-8")
+
+    index = RepositoryChunker().create_index(tmp_path)
+
+    assert [document.source_path for document in index.documents] == ["source.py"]
+    assert [chunk.source_path for chunk in index.chunks] == ["source.py"]

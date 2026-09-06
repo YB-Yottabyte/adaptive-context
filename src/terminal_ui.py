@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Sequence
+from pathlib import Path
 from queue import Empty, Queue
 from threading import Thread
 from time import perf_counter, sleep
@@ -16,6 +17,7 @@ from rich.panel import Panel
 from rich.syntax import Syntax
 from rich.text import Text
 
+from context_metrics import ContextMetrics, RetrievalEvaluation
 from debugging_result import (
     DebuggingSummaryParser,
     SourceChangeAnalyzer,
@@ -123,12 +125,49 @@ class TerminalUI:
             style="dim",
         )
 
+    def display_repository(self, display_name: str, repository_path: Path) -> None:
+        """Identify the local repository used for a real-world run."""
+        heading = Text("Repository", style="bold")
+        self.console.print(heading)
+        self.console.print(f"  {display_name}")
+        self.console.print(f"  {repository_path}", style="dim")
+
+    def display_repository_index(self, source_files: int, chunks: int) -> None:
+        """Show the size of the indexed Python repository."""
+        heading = Text("● ", style="green")
+        heading.append("Indexed repository", style="bold")
+        self.console.print(heading)
+        self.console.print(f"  ├─ Python files: {source_files:,}")
+        self.console.print(f"  └─ Chunks indexed: {chunks:,}")
+
     def display_top_k_adjustment(self, requested: int, available: int) -> None:
         """Explain when Top-K is capped by the available repository chunks."""
         self.console.print(
             f"Requested top-k = {requested}, but only {available} repository "
             f"chunks are available; using top-k = {available}.",
             style="yellow",
+        )
+
+    def display_retrieval_evaluation(
+        self,
+        evaluation: RetrievalEvaluation,
+    ) -> None:
+        """Render optional metadata-based retrieval results after selection."""
+        self.console.print()
+        self.console.print("  Retrieval evaluation", style="bold")
+        if not evaluation.matches:
+            self.console.print("  No gold patch files were supplied.", style="dim")
+            return
+        for match in evaluation.matches:
+            if match.rank is None:
+                self.console.print(f"  - {match.source_path}  — not retrieved")
+            else:
+                self.console.print(f"  - {match.source_path}  ✓ rank {match.rank}")
+        retrieved = "Yes" if evaluation.gold_file_retrieved else "No"
+        best_rank = evaluation.best_gold_file_rank
+        self.console.print(f"  Gold file retrieved: {retrieved}")
+        self.console.print(
+            f"  Best gold-file rank: {best_rank if best_rank is not None else '—'}"
         )
 
     def response_renderable(
@@ -144,15 +183,15 @@ class TerminalUI:
             fallback_to_response=final,
         )
         relevant_file = self.summary_parser.relevant_file_name(summary.relevant_file)
-        current_definition = self.change_analyzer.find_current_definition(
+        source_change = self.change_analyzer.find_source_change(
             summary,
             selected_chunks,
         )
         suggestion_repeats_source = False
-        if current_definition is not None and summary.suggested_change:
+        if source_change is not None and summary.suggested_change:
             before_changed, after_changed = self.change_analyzer.changed_line_numbers(
-                current_definition.code,
-                summary.suggested_change,
+                source_change.current.code,
+                source_change.suggested_code,
             )
             suggestion_repeats_source = not before_changed and not after_changed
         diagnosis_incomplete = final and (
@@ -218,7 +257,7 @@ class TerminalUI:
             )
 
         if (
-            current_definition is not None
+            source_change is not None
             and not suggestion_repeats_source
             and summary.suggested_change
             and suggestion_complete
@@ -226,11 +265,14 @@ class TerminalUI:
             renderables.extend(
                 (Text(""), Text("  Suggested change", style="bold"), Text(""))
             )
+            renderables.append(
+                Padding(Text(source_change.current.source_path, style="dim"), (0, 0, 0, 2))
+            )
             renderables.extend(
                 Padding(line, (0, 0, 0, 2))
                 for line in self._changed_code_renderables(
-                    current_definition,
-                    summary.suggested_change,
+                    source_change.current,
+                    source_change.suggested_code,
                 )
             )
         elif summary.suggested_change and suggestion_complete:
@@ -412,6 +454,23 @@ class TerminalUI:
                 style="dim",
             )
         self.console.print(f"  Completed in {total_execution:.1f}s", style="dim")
+
+    def display_context_metrics(self, metrics: ContextMetrics) -> None:
+        """Render deterministic repository/context estimates for a real run."""
+        self.console.print()
+        self.console.print("  Context metrics", style="bold")
+        self.console.print(f"  Chunks sent to model: {metrics.chunks_selected:,}")
+        self.console.print(
+            f"  Repository source tokens (estimated): "
+            f"{metrics.repository_source_tokens:,}"
+        )
+        self.console.print(
+            f"  Retrieved context tokens (estimated): "
+            f"{metrics.retrieved_context_tokens:,}"
+        )
+        self.console.print(
+            f"  Repository source selected: {metrics.context_selected_percent:.1f}%"
+        )
 
     def _play_response(
         self,

@@ -18,10 +18,12 @@ IGNORED_DIRECTORIES = {
     ".ruff_cache",
     ".tox",
     ".venv",
+    ".nox",
     "__pycache__",
     "build",
     "dist",
     "node_modules",
+    "venv",
 }
 GENERATED_PYTHON_SUFFIXES = (".generated.py", "_pb2.py", "_pb2_grpc.py")
 
@@ -34,6 +36,27 @@ class CodeChunk:
     content: str
     start_line: int
     end_line: int
+
+
+@dataclass(frozen=True)
+class SourceDocument:
+    """One readable Python source file discovered in a repository."""
+
+    source_path: str
+    content: str
+
+
+@dataclass(frozen=True)
+class RepositoryIndex:
+    """Source documents and deterministic chunks prepared for retrieval."""
+
+    documents: tuple[SourceDocument, ...]
+    chunks: tuple[CodeChunk, ...]
+
+    @property
+    def source_file_count(self) -> int:
+        """Return the number of readable source files in the index."""
+        return len(self.documents)
 
 
 @dataclass(frozen=True)
@@ -81,17 +104,18 @@ class RepositoryChunker:
         repository_dir = repository_dir.resolve()
         if not repository_dir.exists():
             raise FileNotFoundError(
-                f"Test case directory does not exist: {repository_dir}"
+                f"Repository directory does not exist: {repository_dir}"
             )
         if not repository_dir.is_dir():
             raise NotADirectoryError(
-                f"Test case path is not a directory: {repository_dir}"
+                f"Repository path is not a directory: {repository_dir}"
             )
 
         files = [
             path
             for path in repository_dir.rglob("*.py")
             if path.is_file()
+            and not path.is_symlink()
             and not path.name.startswith(".")
             and not path.name.endswith(GENERATED_PYTHON_SUFFIXES)
             and not any(
@@ -106,13 +130,43 @@ class RepositoryChunker:
 
     def chunk_file(self, file_path: Path, repository_dir: Path) -> list[CodeChunk]:
         """Split one source file into overlapping, contiguous line chunks."""
-        lines = file_path.read_text(encoding="utf-8").splitlines()
-        if not lines:
+        content = self._read_source(file_path)
+        if content is None:
             return []
-
         relative_path = (
             file_path.resolve().relative_to(repository_dir.resolve()).as_posix()
         )
+        return self._chunk_content(relative_path, content)
+
+    def create_index(self, repository_dir: Path) -> RepositoryIndex:
+        """Read source files once and prepare their deterministic chunks."""
+        documents: list[SourceDocument] = []
+        chunks: list[CodeChunk] = []
+        repository_dir = repository_dir.resolve()
+        for file_path in self.find_python_files(repository_dir):
+            content = self._read_source(file_path)
+            if content is None:
+                continue
+            relative_path = file_path.relative_to(repository_dir).as_posix()
+            documents.append(SourceDocument(relative_path, content))
+            chunks.extend(self._chunk_content(relative_path, content))
+        return RepositoryIndex(tuple(documents), tuple(chunks))
+
+    def create_chunks(self, repository_dir: Path) -> list[CodeChunk]:
+        """Discover Python files and convert them to retrievable chunks."""
+        return list(self.create_index(repository_dir).chunks)
+
+    @staticmethod
+    def _read_source(file_path: Path) -> str | None:
+        """Read text safely and reject files that contain binary null bytes."""
+        content = file_path.read_text(encoding="utf-8", errors="replace")
+        return None if "\x00" in content else content
+
+    def _chunk_content(self, relative_path: str, content: str) -> list[CodeChunk]:
+        """Split already-read source text into overlapping line chunks."""
+        lines = content.splitlines()
+        if not lines:
+            return []
         step = self.chunk_lines - self.overlap_lines
         chunks: list[CodeChunk] = []
         for start_index in range(0, len(lines), step):
@@ -129,11 +183,4 @@ class RepositoryChunker:
             )
             if start_index + self.chunk_lines >= len(lines):
                 break
-        return chunks
-
-    def create_chunks(self, repository_dir: Path) -> list[CodeChunk]:
-        """Discover Python files and convert them to retrievable chunks."""
-        chunks: list[CodeChunk] = []
-        for file_path in self.find_python_files(repository_dir):
-            chunks.extend(self.chunk_file(file_path, repository_dir))
         return chunks
