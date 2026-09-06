@@ -1,4 +1,0 @@
-Contacts imported from a valid CRM CSV file have shifted fields when a display name
-contains a comma. For example, the quoted name "Rivera, Ana" is shown incorrectly
-and the resulting email field is no longer ana@example.com. Rows with simple names
-import normally.

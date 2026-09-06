@@ -196,10 +196,9 @@ longer. Local Chroma data is stored in the ignored `.chroma/` directory.
 
 ### 6. Run against a local real repository
 
-Follow the complete [Requests #7432 example](#example-requests-7432) to create the
-local checkout and issue input, select the historical buggy revision, run the same
-Static RAG baseline, and inspect its retrieval and diagnosis output. The example
-documents the procedure only; it does not record or imply a benchmark result.
+See [Real-World Repository Evaluation](#real-world-repository-evaluation) for the
+optional Requests #7432 walkthrough. It documents the procedure only; it does not
+record or imply a benchmark result.
 
 ### 7. Run the baseline's own tests
 
@@ -263,7 +262,7 @@ the input difficulty, not the retrieval architecture or model-call workflow.
 
 ### Controlled Development Cases
 
-The six cases under `test_cases/` are intentionally small, controlled debugging
+The two cases under `test_cases/` are intentionally small, controlled debugging
 examples. They are development and sanity cases used to:
 
 - verify retrieval behavior;
@@ -275,14 +274,12 @@ examples. They are development and sanity cases used to:
 They exercise known failure categories, but they are not real-world benchmark
 data and should not be presented as such.
 
-| Test case | Main bug category |
+| Test case | Evaluation role |
 | --- | --- |
-| `payment_bug` | Ignored return value / business logic |
-| `auth_bug` | Incorrect conditional logic across files |
-| `batching_bug` | Exact-boundary edge case |
-| `config_bug` | Configuration and default interaction |
-| `data_parsing_bug` | Quoted CSV parsing |
-| `state_mutation_bug` | Unintended state mutation across files |
+| `payment_bug` | Simple controlled sanity case for an ignored return value |
+| `auth_bug` | Slightly more complex controlled multi-file authorization case |
+
+These lead into Requests #7432 as the medium real-world repository evaluation.
 
 The examples below use `payment_bug`. Run it interactively without specifying a
 provider or Top-K:
@@ -305,10 +302,20 @@ uv run python src/baseline.py payment_bug --provider groq --top-k 3
 
 ### Real-World Repository Evaluation
 
-The same Static RAG baseline can run against a real open-source repository checked
-out at a historical buggy revision and paired with the original real-world bug
-report. The first real-world repository used for this stage is
+The controlled `payment_bug` and `auth_bug` cases remain the development and sanity
+checks. As an optional medium-difficulty real-world evaluation, the same Static RAG
+baseline can run against a historical bug from
 [`psf/requests`](https://github.com/psf/requests).
+
+<details>
+<summary><strong>Optional: Test with Requests #7432</strong></summary>
+
+[Requests issue #7432](https://github.com/psf/requests/issues/7432) is a real
+regression affecting `PreparedRequest.prepare_body` in Requests 2.34.0. For this
+baseline case, Requests is checked out at the historical buggy 2.34.0 release
+revision, while a concise issue report is stored separately. The known maintainer
+fix must **not** be included in the repository context or issue text supplied to
+the LLM. This remains one fixed Top-K retrieval followed by one LLM call.
 
 ```text
 Real bug report
@@ -325,15 +332,6 @@ Diagnosis + suggested change
     ↓
 Evaluation against known maintainer fix
 ```
-
-#### Example: Requests #7432
-
-[Requests issue #7432](https://github.com/psf/requests/issues/7432) is a real
-regression affecting `PreparedRequest.prepare_body` in Requests 2.34.0. For this
-baseline case, Requests is checked out at the historical buggy 2.34.0 release
-revision, while a concise issue report is stored separately. The known maintainer
-fix must **not** be included in the repository context or issue text supplied to
-the LLM. This remains one fixed Top-K retrieval followed by one LLM call.
 
 ##### 1. Create the local directories
 
@@ -433,9 +431,6 @@ Retrieving `src/requests/models.py` does not automatically make the diagnosis or
 suggested change correct. Retrieval success, diagnosis accuracy, and
 suggested-change correctness are evaluated separately.
 
-Requests #7432 is a medium-difficulty real-world case. The six cases under
-`test_cases/` remain controlled development and sanity cases.
-
 Repository safety for this workflow:
 
 - `data/repos/requests` is a local-only third-party checkout;
@@ -496,6 +491,8 @@ This remains the **Static RAG baseline**: one fixed Top-K retrieval followed by 
 LLM call. Later, Adaptive Context / Dynamic RAG will be evaluated against the same
 cases using the same repository revision, issue text, provider, model, and
 evaluation criteria.
+
+</details>
 
 ## Example Baseline Output
 
@@ -563,11 +560,7 @@ implementation, and the helper needed to support the diagnosis.
 │       └── local_mlx.py        # optional Apple Silicon inference
 ├── test_cases/                 # intentionally buggy evaluation repositories
 │   ├── auth_bug/
-│   ├── batching_bug/
-│   ├── config_bug/
-│   ├── data_parsing_bug/
-│   ├── payment_bug/
-│   └── state_mutation_bug/
+│   └── payment_bug/
 ├── tests/                      # baseline's passing unit tests
 ├── data/
 │   ├── issues/                 # small reproducible real-world case inputs

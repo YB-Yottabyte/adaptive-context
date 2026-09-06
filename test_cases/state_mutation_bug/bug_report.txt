@@ -1,4 +1,0 @@
-After a customer previews a cart total with a coupon, returning to the regular
-checkout shows the reduced prices even though no coupon is selected. A preview for
-two $10 mugs at 25% off should show $15, while a later quote without the coupon
-should still show the original $20 total.

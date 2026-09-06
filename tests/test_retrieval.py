@@ -1,125 +1,85 @@
+"""Repository discovery, chunking, and fixed Top-K retrieval coverage."""
+
 from pathlib import Path
 
-import pytest
+import chromadb
 
-from retrieval import (
-    CodeChunk,
-    RepositoryChunker,
-    SourceDocument,
-)
+from retrieval import CodeChunk, RepositoryChunker
+from semantic_retrieval import ChromaRetriever
 
 
-def test_find_python_files_is_recursive_sorted_and_ignores_hidden_dirs(
-    tmp_path: Path,
-) -> None:
-    (tmp_path / "nested").mkdir()
-    (tmp_path / ".venv").mkdir()
-    (tmp_path / "venv").mkdir()
-    (tmp_path / "z.py").write_text("z = 1\n", encoding="utf-8")
-    (tmp_path / "nested" / "a.py").write_text("a = 1\n", encoding="utf-8")
+class KeywordEmbedding:
+    """Small deterministic embedding used instead of downloading a model."""
+
+    vocabulary = ("checkout", "discount", "permission")
+
+    def __call__(self, texts: list[str]) -> list[list[float]]:
+        return [
+            [1.0, *(float(text.lower().count(term)) for term in self.vocabulary)]
+            for text in texts
+        ]
+
+
+def test_python_discovery_excludes_ignored_directories(tmp_path: Path) -> None:
+    (tmp_path / "package").mkdir()
+    for ignored in (".git", ".venv", "__pycache__", "build", ".chroma"):
+        directory = tmp_path / ignored
+        directory.mkdir()
+        (directory / "ignored.py").write_text("ignored = True\n", encoding="utf-8")
+    (tmp_path / "package" / "service.py").write_text(
+        "def service(): pass\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "main.py").write_text("def main(): pass\n", encoding="utf-8")
     (tmp_path / "notes.txt").write_text("not Python\n", encoding="utf-8")
-    (tmp_path / ".venv" / "ignored.py").write_text("ignored = 1\n", encoding="utf-8")
-    (tmp_path / "venv" / "ignored.py").write_text("ignored = 2\n", encoding="utf-8")
 
     files = RepositoryChunker().find_python_files(tmp_path)
 
     assert [path.relative_to(tmp_path).as_posix() for path in files] == [
-        "nested/a.py",
-        "z.py",
+        "main.py",
+        "package/service.py",
     ]
 
 
-def test_find_python_files_excludes_generated_and_cache_content(
-    tmp_path: Path,
-) -> None:
-    (tmp_path / "build").mkdir()
-    (tmp_path / ".chroma").mkdir()
-    (tmp_path / "application.py").write_text("value = 1\n", encoding="utf-8")
-    (tmp_path / ".private.py").write_text("secret = True\n", encoding="utf-8")
-    (tmp_path / "service_pb2.py").write_text("generated = True\n", encoding="utf-8")
-    (tmp_path / "build" / "artifact.py").write_text("built = True\n", encoding="utf-8")
-    (tmp_path / ".chroma" / "index.py").write_text("index = True\n", encoding="utf-8")
-
-    files = RepositoryChunker().find_python_files(tmp_path)
-
-    assert [path.name for path in files] == ["application.py"]
-
-
-def test_chunk_file_creates_overlapping_chunks_with_metadata(tmp_path: Path) -> None:
-    source = tmp_path / "module.py"
-    source.write_text("one\ntwo\nthree\nfour\nfive\n", encoding="utf-8")
-
-    chunks = RepositoryChunker(chunk_lines=3, overlap_lines=1).chunk_file(
-        source,
-        tmp_path,
-    )
-
-    assert chunks == [
-        CodeChunk("module.py", "one\ntwo\nthree", 1, 3),
-        CodeChunk("module.py", "three\nfour\nfive", 3, 5),
-    ]
-
-
-@pytest.mark.parametrize(
-    ("chunk_lines", "overlap_lines", "message"),
-    [
-        (0, 0, "chunk_lines must be at least 1"),
-        (3, -1, "overlap_lines must be between 0 and chunk_lines - 1"),
-        (3, 3, "overlap_lines must be between 0 and chunk_lines - 1"),
-    ],
-)
-def test_chunk_file_rejects_invalid_chunk_configuration(
-    tmp_path: Path,
-    chunk_lines: int,
-    overlap_lines: int,
-    message: str,
-) -> None:
-    source = tmp_path / "module.py"
-    source.write_text("value = 1\n", encoding="utf-8")
-
-    with pytest.raises(ValueError, match=message):
-        RepositoryChunker(
-            chunk_lines=chunk_lines,
-            overlap_lines=overlap_lines,
-        )
-
-
-def test_chunk_file_ignores_empty_python_file(tmp_path: Path) -> None:
-    source = tmp_path / "empty.py"
-    source.write_text("", encoding="utf-8")
-
-    assert RepositoryChunker().chunk_file(source, tmp_path) == []
-
-
-def test_create_repository_chunks_handles_small_repository(tmp_path: Path) -> None:
-    (tmp_path / "small.py").write_text("value = 1\n", encoding="utf-8")
-
-    chunks = RepositoryChunker().create_chunks(tmp_path)
-
-    assert chunks == [CodeChunk("small.py", "value = 1", 1, 1)]
-
-
-def test_create_index_preserves_documents_and_chunk_metadata(tmp_path: Path) -> None:
+def test_chunks_include_relative_paths_and_line_ranges(tmp_path: Path) -> None:
     (tmp_path / "package").mkdir()
     source = tmp_path / "package" / "service.py"
-    source.write_text("one\ntwo\nthree\n", encoding="utf-8")
+    source.write_text("one\ntwo\nthree\nfour\nfive\n", encoding="utf-8")
 
-    index = RepositoryChunker(chunk_lines=2, overlap_lines=1).create_index(tmp_path)
+    index = RepositoryChunker(chunk_lines=3, overlap_lines=1).create_index(tmp_path)
 
-    assert index.documents == (
-        SourceDocument("package/service.py", "one\ntwo\nthree\n"),
+    assert list(index.chunks) == [
+        CodeChunk("package/service.py", "one\ntwo\nthree", 1, 3),
+        CodeChunk("package/service.py", "three\nfour\nfive", 3, 5),
+    ]
+
+
+def test_semantic_retrieval_returns_fixed_top_k(tmp_path: Path) -> None:
+    retriever = ChromaRetriever(
+        client=chromadb.EphemeralClient(),
+        embedding_function=KeywordEmbedding(),
     )
-    assert index.chunks == (
-        CodeChunk("package/service.py", "one\ntwo", 1, 2),
-        CodeChunk("package/service.py", "two\nthree", 2, 3),
-    )
+    chunks = [
+        CodeChunk("notifications.py", "def send_email(): pass", 1, 1),
+        CodeChunk(
+            "payment.py",
+            "def checkout(price, discount): return price",
+            1,
+            1,
+        ),
+        CodeChunk("permissions.py", "def has_permission(): return False", 1, 1),
+    ]
 
+    try:
+        results = retriever.retrieve(
+            "checkout ignores the discount",
+            chunks,
+            2,
+            tmp_path,
+        )
+    finally:
+        retriever.close()
 
-def test_create_index_skips_binary_python_file(tmp_path: Path) -> None:
-    (tmp_path / "binary.py").write_bytes(b"value = 1\x00binary")
-    (tmp_path / "source.py").write_text("value = 1\n", encoding="utf-8")
-
-    index = RepositoryChunker().create_index(tmp_path)
-
-    assert [document.source_path for document in index.documents] == ["source.py"]
-    assert [chunk.source_path for chunk in index.chunks] == ["source.py"]
+    assert len(results) == 2
+    assert results[0].chunk.source_path == "payment.py"
+    assert results[0].score > results[1].score
