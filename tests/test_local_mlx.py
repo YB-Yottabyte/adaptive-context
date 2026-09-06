@@ -1,3 +1,4 @@
+from contextlib import nullcontext
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -95,11 +96,18 @@ def test_model_loading_is_cached_by_model_name() -> None:
 
     LocalMLXProvider._loaded_models.pop("cached-model", None)
     try:
-        with patch.dict("sys.modules", {"mlx_lm": mlx_lm}):
+        with (
+            patch.dict("sys.modules", {"mlx_lm": mlx_lm}),
+            patch(
+                "huggingface_hub.utils.disable_progress_bars",
+                return_value=nullcontext(),
+            ) as disable_progress,
+        ):
             assert first._load_model() == ("model", tokenizer)
             assert second._load_model() == ("model", tokenizer)
     finally:
         LocalMLXProvider._loaded_models.pop("cached-model", None)
 
+    disable_progress.assert_called_once_with()
     load.assert_called_once_with("cached-model")
     tokenizer.add_eos_token.assert_called_once_with("</s>")

@@ -28,9 +28,11 @@ class LocalMLXProvider(LLMProvider):
     def _load_model(self) -> tuple[Any, Any]:
         """Load and cache each requested model once per Python process."""
         if self.model_name not in self._loaded_models:
+            from huggingface_hub.utils import disable_progress_bars
             from mlx_lm import load
 
-            model, tokenizer = load(self.model_name)
+            with disable_progress_bars():
+                model, tokenizer = load(self.model_name)
             if tokenizer.eos_token is not None:
                 tokenizer.add_eos_token(tokenizer.eos_token)
             self._loaded_models[self.model_name] = model, tokenizer

@@ -60,6 +60,8 @@ The repository-relative path of the file to change.
 Suggested change:
 The complete rewritten function containing the fix, without Markdown fences. If the
 relevant code is not a function, provide the smallest self-contained changed block.
+Verify that this code differs from the current implementation and directly changes
+the behavior described in the bug report.
 
 Explanation:
 A brief explanation of why the change fixes the observed behavior.

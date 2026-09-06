@@ -1,14 +1,47 @@
-# Context Debug
+<h1 align="center">Adaptive Context</h1>
 
-Context Debug is a repository-level AI debugging capstone about **adaptive and
-token-efficient context management**. The final project will investigate how
-dynamic retrieval, context selection, compression, and pruning can support more
-accurate debugging without simply increasing prompt size.
+<p align="center">
+  <strong>An AI debugging agent that finds the right code context without overwhelming the model.</strong>
+</p>
 
-The system implemented now is deliberately simpler: a **Static RAG baseline** that
-retrieves a fixed Top-K once and asks one language model to diagnose the bug and
-suggest a change. It does not adapt its query, compress context, edit source files,
-run verification tools, or claim that its suggestion has been verified.
+---
+
+<p align="center">
+  <img src="./adaptive-context.png" alt="Adaptive Context diagnosing a payment bug in the terminal" width="100%">
+</p>
+
+Adaptive Context solves a specific problem: **helping a developer locate and
+explain a behavioral bug without sending an entire repository to an LLM**. It is
+designed for developers who can describe or reproduce a failure but do not yet
+know which code is responsible.
+
+### Core problem: context compression and sequencing
+
+The core problem is not simply retrieving more code. It is **compressing context
+without losing the facts needed to explain the bug** and **sequencing the retained
+evidence so the model can follow the failure from the test to the responsible
+implementation and its dependencies**.
+
+A successful system produces the correct diagnosis with a smaller, coherently
+ordered prompt. It fails when compression removes necessary evidence or poor
+sequencing breaks the causal relationships between the failure, execution path,
+and root cause.
+
+- **Input:** a bug report plus the repository's source code and tests.
+- **Output:** relevant code evidence, the likely root cause and file, and a concise
+  suggested change.
+- **Success:** the retrieved context contains the code needed to explain the bug,
+  the diagnosis identifies the intended faulty behavior, and the suggestion is
+  consistent with the failing test.
+- **Failure:** the system retrieves insufficient context, identifies the wrong
+  cause or file, invents unsupported details, or suggests a change that would not
+  satisfy the test.
+
+The current **Static RAG baseline** uses ChromaDB to retrieve the most relevant
+code, asks an LLM to diagnose the bug, and returns an evidence-backed suggested
+change.
+
+---
 
 ## Quickstart
 
@@ -24,8 +57,8 @@ Requirements:
 Clone and install the locked dependencies:
 
 ```bash
-git clone https://github.com/YB-Yottabyte/agentic-debugger.git
-cd agentic-debugger
+git clone https://github.com/YB-Yottabyte/cse598-capstone-project-proposal.git
+cd cse598-capstone-project-proposal
 uv sync --dev
 ```
 
@@ -148,7 +181,9 @@ public model.
    ```
 
 5. On the first run, MLX downloads the model files from Hugging Face and caches
-   them locally. Later runs reuse the cache.
+   them locally. The CLI suppresses Hugging Face's nested progress bars so they do
+   not disrupt its terminal display; the existing status indicator remains visible
+   while loading. Later runs reuse the cache.
 
 To choose another local model, browse the
 [MLX Community models on Hugging Face](https://huggingface.co/mlx-community),
@@ -211,7 +246,7 @@ working.
 
 ### 4. Run the AI debugging baseline
 
-Interactive class/demo command:
+Interactive class command:
 
 ```bash
 uv run python src/baseline.py payment_bug
@@ -237,8 +272,9 @@ uv run python src/baseline.py test_cases/payment_bug \
     --top-k 3
 ```
 
-The result appears in the terminal and includes retrieved chunks, diagnosis,
-evidence, a line-level suggested change, token usage, and total execution time.
+The result appears in the terminal with the model response revealed in small,
+paced chunks. It includes retrieved chunks, diagnosis, evidence, a line-level
+suggested change, token usage, and total execution time.
 
 ### 5. Run the baseline's own tests
 
@@ -511,7 +547,7 @@ src/retrieval.py            repository chunking, models, and interfaces
 src/semantic_retrieval.py   ChromaDB indexing and similarity search
 src/context_builder.py      debugging prompt construction
 src/debugging_result.py     response parsing and source-change analysis
-src/terminal_ui.py          terminal presentation and smooth playback
+src/terminal_ui.py          terminal presentation and paced response streaming
 src/providers/              provider interface, implementations, and factory
 ```
 
