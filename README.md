@@ -8,7 +8,7 @@
   <img src="./adaptive-context.png" alt="Adaptive Context diagnosing a payment bug in the terminal" width="100%">
 </p>
 
-Adaptive Context explores how targeted retrieval, compression, and sequencing can
+Adaptive Context explores **how targeted retrieval, compression, and sequencing** can
 help an LLM explain a behavioral bug without receiving an entire repository. It is
 designed for developers who can describe or reproduce a failure but do not yet know
 which code is responsible.
