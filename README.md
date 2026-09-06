@@ -1,9 +1,12 @@
-# Adaptive Context
+<h1 align="center">Adaptive Context</h1>
 
-**An AI debugging system that finds the right code context without overwhelming
-the model.**
+<p align="center">
+  <strong>An AI debugging system that finds the right code context without overwhelming the model.</strong>
+</p>
 
-![Adaptive Context diagnosing a payment bug in the terminal](./adaptive-context.png)
+<p align="center">
+  <img src="./adaptive-context.png" alt="Adaptive Context diagnosing a payment bug in the terminal" width="100%">
+</p>
 
 Adaptive Context explores how targeted retrieval, compression, and sequencing can
 help an LLM explain a behavioral bug without receiving an entire repository. It is
