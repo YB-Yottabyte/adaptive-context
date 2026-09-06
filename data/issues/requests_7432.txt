@@ -1,0 +1,19 @@
+prepare_body stream detection regression
+
+Requests 2.34.0 changed stream detection in PreparedRequest.prepare_body()
+from checking hasattr(data, "__iter__") to isinstance(data, Iterable).
+
+This breaks file-like wrappers that expose __iter__, read, tell, and seek
+through __getattr__ delegation, because isinstance(..., Iterable) only
+checks the class hierarchy.
+
+As a result, _body_position is not recorded and the request body cannot
+be rewound on 307/308 redirects.
+
+Expected behavior:
+The upload should complete successfully through the redirect, as it did
+in Requests 2.33.1.
+
+Actual behavior:
+The redirected request sends an empty or already-consumed body, and the
+request eventually times out.
