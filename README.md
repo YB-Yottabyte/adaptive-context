@@ -57,7 +57,7 @@ uv sync --dev
 ### 2. Configure Groq and GPT-OSS 20B
 
 Create an API key in the [GroqCloud Console](https://console.groq.com/keys). On
-macOS or Linux, create a `.env` file in the repository root containing:
+**macOS or Linux**, create a `.env` file in the repository root containing:
 
 > **Important: Configure `GROQ_API_KEY` before running the Groq baseline. Use the
 > `.env` instructions for Bash/Zsh or the session commands below on Windows.**
@@ -67,7 +67,7 @@ GROQ_API_KEY=gsk_your_key_here
 GROQ_MODEL=openai/gpt-oss-20b
 ```
 
-On macOS or Linux, load the variables into the current Bash/Zsh session:
+On **macOS or Linux**, load the variables into the current Bash/Zsh session:
 
 ```bash
 set -a
@@ -75,7 +75,7 @@ source .env
 set +a
 ```
 
-Windows PowerShell does not use `source`. Set the same variables for the current
+**Windows PowerShell** does not use `source`. Set the same variables for the current
 PowerShell session, then run the baseline:
 
 ```powershell
