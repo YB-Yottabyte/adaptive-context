@@ -602,6 +602,10 @@ The project aims to analyze a repository and construct a smaller, more focused c
 
 ## Generative AI Use
 
-Generative AI tools including Codex were used to assist with implementation and
-documentation. Their use is disclosed for transparency. I reviewed, edited, and
-tested all generated suggestions before including them in the project.
+Generative AI tools, including Codex and ChatGPT were used throughout the project
+to support code development, debugging, test-case creation, code review, and
+improvements to the README. They were also used to improve the structure of the
+baseline and identify areas where additional testing was needed. All AI-generated
+suggestions and code changes were reviewed, edited when necessary, and tested
+before being included in the repository. I made the final implementation
+decisions, project design choices, and evaluation choices.
