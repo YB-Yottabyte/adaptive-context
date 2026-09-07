@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <img src="./real-world.png" alt="Adaptive Context diagnosing a payment bug in the terminal" width="100%">
+  <img src="./adaptive-context.png" alt="Adaptive Context diagnosing a payment bug in the terminal" width="100%">
 </p>
 
 Adaptive Context explores **how targeted retrieval, compression, and sequencing** can
@@ -49,8 +49,8 @@ Requirements:
 Clone the repository and install the locked dependencies:
 
 ```bash
-git clone https://github.com/YB-Yottabyte/cse598-capstone-project-proposal.git
-cd cse598-capstone-project-proposal
+git clone https://github.com/YB-Yottabyte/adaptive-context.git
+cd adaptive-context
 uv sync --dev
 ```
 
